@@ -10,4 +10,7 @@ export const getScanHistory = database.getScanHistory;
 export const getScanById = database.getScanById;
 export const persistCandidates = database.persistCandidates;
 export const getCandidates = database.getCandidates;
+export const saveInvestigation = database.saveInvestigation;
+export const getInvestigation = database.getInvestigation;
+export const getInvestigations = database.getInvestigations;
 export const closeDatabase = database.closeDatabase;

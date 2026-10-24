@@ -169,7 +169,7 @@ export function SettingsPage() {
               />
               Demo mode (use synthetic data)
             </label>
-            <p className="text-xs text-slate-500 mt-1 ml-7">When enabled, the app uses demo data instead of live API sources</p>
+            <p className="text-xs text-slate-500 mt-1 ml-7">When enabled, brand-aware synthetic examples are added alongside available live and imported sources</p>
           </div>
 
           <button

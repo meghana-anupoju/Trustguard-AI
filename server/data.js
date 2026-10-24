@@ -142,3 +142,118 @@ export const appCandidates = [
     lastChecked: new Date().toISOString(),
   },
 ];
+
+function brandSlug(value) {
+  return value
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    || 'brand';
+}
+
+export function createDemoCandidates(profile) {
+  const slug = brandSlug(profile.companyName);
+  const brand = profile.companyName;
+  const checkedAt = new Date().toISOString();
+
+  return {
+    socialCandidates: [
+      ...profile.officialSocials.map((asset, index) => ({
+        id: `demo-official-social-${slug}-${index}`,
+        platform: asset.platform,
+        displayName: asset.displayName,
+        username: asset.username,
+        profileUrl: asset.url,
+        bio: `Synthetic official-account example for ${brand}.`,
+        verified: asset.verified,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      })),
+      {
+        id: `demo-social-support-${slug}`,
+        platform: 'Instagram',
+        displayName: `${brand} Support`,
+        username: `${slug}.support`,
+        profileUrl: `https://instagram.com/${slug}.support`,
+        bio: `Synthetic example: Official ${brand} customer support. Verify your account to claim your reward.`,
+        accountCreatedDate: '2024-08-10',
+        followerCount: 320,
+        verified: false,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      },
+      {
+        id: `demo-social-exact-name-${slug}`,
+        platform: 'X',
+        displayName: brand,
+        username: `${slug}.helpdesk`,
+        profileUrl: `https://x.com/${slug}.helpdesk`,
+        bio: `Synthetic example: ${brand} support account. Verify your account to claim your reward.`,
+        accountCreatedDate: '2025-02-12',
+        followerCount: 140,
+        verified: false,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      },
+      {
+        id: `demo-social-rewards-${slug}`,
+        platform: 'Facebook',
+        displayName: `${brand} Rewards`,
+        username: `${slug}rewards`,
+        profileUrl: `https://facebook.com/${slug}rewards`,
+        bio: `Synthetic example: Claim your guaranteed ${brand} rewards. Urgent payment required to verify your account.`,
+        accountCreatedDate: '2025-01-05',
+        followerCount: 1240,
+        verified: false,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      },
+    ],
+    appCandidates: [
+      ...profile.officialApps.map((asset, index) => ({
+        id: `demo-official-app-${slug}-${index}`,
+        appName: asset.appName,
+        store: asset.store,
+        packageId: asset.packageId,
+        publisher: asset.publisher,
+        storeUrl: asset.url,
+        description: `Synthetic official-app example for ${brand}.`,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      })),
+      {
+        id: `demo-app-support-${slug}`,
+        appName: `${brand} Support`,
+        store: 'Google Play',
+        packageId: `com.demo.${slug}.support`,
+        publisher: 'Demo Sample Publisher',
+        storeUrl: `https://play.google.com/store/apps/details?id=com.demo.${slug}.support`,
+        description: `Synthetic example: ${brand} support app. Verify your account to claim your reward.`,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      },
+      {
+        id: `demo-app-exact-name-${slug}`,
+        appName: brand,
+        store: 'Google Play',
+        packageId: `com.demo.${slug}.brand`,
+        publisher: 'Demo Sample Publisher',
+        storeUrl: `https://play.google.com/store/apps/details?id=com.demo.${slug}.brand`,
+        description: `Synthetic example: ${brand} wallet. Verify your account to claim your reward.`,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      },
+      {
+        id: `demo-app-rewards-${slug}`,
+        appName: `${brand} Rewards`,
+        store: 'Apple App Store',
+        packageId: `com.demo.${slug}.rewards`,
+        publisher: 'Demo Sample Publisher',
+        storeUrl: `https://apps.apple.com/app/${slug}-rewards`,
+        description: `Synthetic example: Claim your guaranteed ${brand} rewards with an urgent payment.`,
+        source: 'Demo Dataset',
+        lastChecked: checkedAt,
+      },
+    ],
+  };
+}

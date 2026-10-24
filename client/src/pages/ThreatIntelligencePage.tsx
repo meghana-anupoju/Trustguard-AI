@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Flag,
   Search,
@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  RotateCcw,
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { RiskBadge, StatusBadge } from '@/components/shared/Badges';
@@ -18,25 +17,41 @@ import type { ThreatDetection, AssetType, RiskLevel, InvestigationStatus } from 
 
 const ASSET_TYPES: (AssetType | 'All')[] = ['All', 'Social Profile', 'Mobile App'];
 const RISK_LEVELS: (RiskLevel | 'All')[] = ['All', 'Critical', 'High', 'Medium', 'Low'];
-const STATUSES: (InvestigationStatus | 'All')[] = ['All', 'New', 'Investigating', 'Confirmed Threat', 'False Positive', 'Resolved'];
+const STATUSES: (InvestigationStatus | 'All')[] = ['All', 'New', 'Investigating', 'Confirmed Threat', 'False Positive', 'Resolved', 'Closed'];
 const PAGE_SIZE = 10;
 
 export function ThreatIntelligencePage() {
-  const { detections, isScanning, runScanning } = useApp();
+  const { detections, isScanning, runScanning, focusedDetectionId, clearFocusedDetection } = useApp();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<AssetType | 'All'>('All');
   const [riskFilter, setRiskFilter] = useState<RiskLevel | 'All'>('All');
   const [statusFilter, setStatusFilter] = useState<InvestigationStatus | 'All'>('All');
   const [showOfficial, setShowOfficial] = useState(false);
+  const [queueView, setQueueView] = useState(true);
   const [sortBy, setSortBy] = useState<'risk' | 'name' | 'date'>('risk');
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<ThreatDetection | null>(null);
+
+  useEffect(() => {
+    if (!focusedDetectionId) return;
+    const detection = detections.find((item) => item.id === focusedDetectionId);
+    if (!detection) return;
+    setQueueView(false);
+    setShowOfficial(detection.isOfficial);
+    setSelected(detection);
+    clearFocusedDetection();
+  }, [focusedDetectionId, detections, clearFocusedDetection]);
 
   const filtered = useMemo(() => {
     let result = [...detections];
 
     if (!showOfficial) {
       result = result.filter((d) => !d.isOfficial);
+    }
+    if (queueView) {
+      result = result.filter((d) =>
+        d.riskScore >= 50 && !['False Positive', 'Resolved', 'Closed'].includes(d.status),
+      );
     }
     if (search) {
       const q = search.toLowerCase();
@@ -59,10 +74,17 @@ export function ThreatIntelligencePage() {
     });
 
     return result;
-  }, [detections, search, typeFilter, riskFilter, statusFilter, showOfficial, sortBy]);
+  }, [detections, search, typeFilter, riskFilter, statusFilter, showOfficial, sortBy, queueView]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageData = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const priorityQueueCount = detections.filter((detection) =>
+    !detection.isOfficial
+    && detection.riskScore >= 50
+    && !['False Positive', 'Resolved', 'Closed'].includes(detection.status),
+  ).length;
+  const inReviewCount = detections.filter((detection) => detection.status === 'Investigating').length;
+  const confirmedCount = detections.filter((detection) => detection.status === 'Confirmed Threat').length;
 
   function handleCSVExport() {
     exportDetectionsCSV(filtered, `threat_intelligence_${Date.now()}.csv`);
@@ -119,6 +141,36 @@ export function ThreatIntelligencePage() {
             )}
           </button>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {[
+          { label: 'Prioritized open queue', value: priorityQueueCount, description: 'Risk score 50+ · sorted highest first', color: 'text-red-300' },
+          { label: 'Under investigation', value: inReviewCount, description: 'Analyst review in progress', color: 'text-violet-300' },
+          { label: 'Confirmed threats', value: confirmedCount, description: 'Eligible for evidence-based report drafts', color: 'text-amber-300' },
+        ].map((item) => (
+          <div key={item.label} className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <p className="text-xs text-slate-400">{item.label}</p>
+            <p className={`mt-1 text-2xl font-bold ${item.color}`}>{item.value}</p>
+            <p className="mt-1 text-xs text-slate-500">{item.description}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => { setQueueView(true); setPage(0); }}
+          className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${queueView ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+        >
+          Open priority queue
+        </button>
+        <button
+          onClick={() => { setQueueView(false); setPage(0); }}
+          className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${!queueView ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+        >
+          All detections
+        </button>
+        {queueView && <span className="text-xs text-slate-500">False positives and closed cases stay out of this queue.</span>}
       </div>
 
       {/* Filters */}
@@ -248,7 +300,7 @@ export function ThreatIntelligencePage() {
       )}
 
       <ThreatDetailDrawer
-        detection={selected}
+        detection={detections.find((detection) => detection.id === selected?.id) ?? selected}
         open={!!selected}
         onClose={() => setSelected(null)}
       />

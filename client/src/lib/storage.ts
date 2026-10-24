@@ -1,4 +1,4 @@
-import type { BrandProfile, ThreatDetection, InvestigationStatus, AppSettings } from '@/types';
+import type { BrandProfile, ThreatDetection, HighRiskAlert, AppSettings } from '@/types';
 import { DEMO_BRAND_PROFILE } from '@/data/demoData';
 
 const STORAGE_KEYS = {
@@ -7,6 +7,8 @@ const STORAGE_KEYS = {
   notes: 'brandshield_notes',
   settings: 'brandshield_settings',
   lastScan: 'brandshield_last_scan',
+  highRiskAlerts: 'brandshield_high_risk_alerts',
+  alertedDetectionIds: 'brandshield_alerted_detection_ids',
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -68,6 +70,19 @@ export const storage = {
   },
   saveLastScan(timestamp: string): void {
     safeSet(STORAGE_KEYS.lastScan, timestamp);
+  },
+
+  getHighRiskAlerts(): HighRiskAlert[] {
+    return safeGet<HighRiskAlert[]>(STORAGE_KEYS.highRiskAlerts, []);
+  },
+  saveHighRiskAlerts(alerts: HighRiskAlert[]): void {
+    safeSet(STORAGE_KEYS.highRiskAlerts, alerts);
+  },
+  getAlertedDetectionIds(): string[] {
+    return safeGet<string[]>(STORAGE_KEYS.alertedDetectionIds, []);
+  },
+  saveAlertedDetectionIds(ids: string[]): void {
+    safeSet(STORAGE_KEYS.alertedDetectionIds, ids);
   },
 
   resetAll(): void {

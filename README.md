@@ -8,14 +8,47 @@ Trustguard AI is a demo brand-protection dashboard that detects impersonating so
 - Brand profile management
 - Social and app monitoring views
 - Threat intelligence and reporting views
+- Prioritized investigation queue with risk/evidence detail, official-asset matching, and description-overlap scoring
+- Analyst decisions and timestamped investigation history persisted by the backend
+- One-time in-app alerts for newly detected High/Critical cases and downloadable, evidence-based report drafts for confirmed threats
 - Demo scan engine with risk scoring
 - Backend API for scan and brand-profile data
 - Best-effort public search connectors for Bluesky profiles and Apple App Store listings
-- SQLite local persistence and managed PostgreSQL support for profiles, imports, and scan history
+- SQLite local persistence and managed PostgreSQL support for profiles, imports, scans, and investigation records
 - Configurable name/risk thresholds and source health visibility
 - Official social accounts and apps excluded from threat alerts
 - Look-alike scoring for transpositions, spacing, and added brand words
 - FAQ-based customer support assistant
+
+## Project structure
+
+```text
+client/              React + TypeScript frontend
+  public/            Static browser assets
+  src/
+    components/      Shared layout and reusable UI components
+    context/         Application state and navigation
+    data/            Brand-aware frontend demo data
+    lib/             API client, detection, storage, and utilities
+    pages/           Screen-level views
+    types/           Shared TypeScript models
+    App.tsx          Page routing and application shell
+    main.tsx         Frontend entry point
+  index.html         Vite HTML entry point
+server/              Express API and backend services
+  index.js           HTTP API routes and application startup
+  sources.js         External source connectors and normalization
+  detection.js       Server-side scoring and official-asset exclusion
+  data.js            Brand-aware backend demo candidates
+  database*.js       Database selection and persistence adapters
+  *.test.js          Backend tests, kept beside the server modules
+docs/                Architecture, data-source limits, and demo guidance
+data/                Local database files (generated; git-ignored)
+dist/                Generated production frontend build (git-ignored)
+*.config.*           Shared root-level build and tooling configuration
+```
+
+Keep screen-specific UI in `client/src/pages`, reusable UI in `client/src/components`, and shared browser logic in `client/src/lib`. Keep API and persistence changes in `server`; add tests beside the server module they cover. Put architecture and operational guidance in `docs` and link it here rather than duplicating long explanations.
 
 ## Local development
 
@@ -24,12 +57,12 @@ npm install
 npm run dev
 ```
 
-The frontend runs on http://localhost:5173 and the API runs on http://localhost:3001. Local development uses `data/brandshield.sqlite` by default. Set `DATABASE_URL` to use PostgreSQL; SQLite is selected only when that variable is unset.
+The frontend runs from `client/` on http://localhost:5173 and the API runs from `server/` on http://localhost:3001. The root npm scripts start both services and the frontend proxies `/api` requests to the API. Local development uses `data/brandshield.sqlite` by default. Set `DATABASE_URL` to use PostgreSQL; SQLite is selected only when that variable is unset.
 
 ## Challenge demo materials
 
 - Architecture, data-source limitations, official-asset exclusion, and a short judging demo flow: [docs/architecture.md](./docs/architecture.md)
-- `npm test` exercises look-alike names, official-asset exclusion, suspicious candidates, unrelated legitimate examples, provider normalization/failure, threshold behavior, and SQLite persistence.
+- `npm test` exercises look-alike names, official-asset exclusion, suspicious candidates, unrelated legitimate examples, provider normalization/failure, threshold behavior, and SQLite persistence for scans and investigation history.
 
 Bluesky and Apple App Store search results are fetched from their public search APIs only when an analyst explicitly starts a scan. The included candidate set is synthetic demo data. Other social networks and app stores are not connected, and these public searches do not provide continuous or comprehensive monitoring. Analysts can import JSON candidate exports; imports, brand profiles, and scans persist in the selected database. Provider availability and sample data are identified separately in the UI. Review each provider's terms, rate limits, and data use requirements before public deployment.
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ExternalLink,
   AlertTriangle,
@@ -7,6 +7,7 @@ import {
   FileText,
   Save,
   RotateCcw,
+  Download,
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { Drawer } from '@/components/shared/Drawer';
@@ -14,13 +15,7 @@ import { RiskBadge, StatusBadge } from '@/components/shared/Badges';
 import { Toast } from '@/components/shared/Toast';
 import type { ThreatDetection, InvestigationStatus } from '@/types';
 
-const STATUS_OPTIONS: InvestigationStatus[] = [
-  'New',
-  'Investigating',
-  'Confirmed Threat',
-  'False Positive',
-  'Resolved',
-];
+const STATUS_OPTIONS: InvestigationStatus[] = ['New', 'Investigating', 'Confirmed Threat', 'False Positive', 'Resolved', 'Closed'];
 
 export function ThreatDetailDrawer({
   detection,
@@ -31,25 +26,65 @@ export function ThreatDetailDrawer({
   open: boolean;
   onClose: () => void;
 }) {
-  const { updateDetectionStatus, updateDetectionNotes, runScanning, isScanning } = useApp();
+  const { brandProfile, updateDetectionStatus, updateDetectionNotes, runScanning, isScanning } = useApp();
   const [notes, setNotes] = useState('');
-  const [toast, setToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'info' | 'warning'; message: string } | null>(null);
+  useEffect(() => {
+    setNotes(detection?.analystNotes ?? '');
+  }, [detection?.id, detection?.analystNotes]);
 
   if (!detection) return null;
 
-  function showToast(type: 'success' | 'info', message: string) {
+  function showToast(type: 'success' | 'info' | 'warning', message: string) {
     setToast({ type, message });
     setTimeout(() => setToast(null), 2500);
   }
 
-  function handleStatusChange(status: InvestigationStatus) {
-    updateDetectionStatus(detection!.id, status);
-    showToast('success', `Status updated to "${status}"`);
+  async function handleStatusChange(status: InvestigationStatus) {
+    try {
+      await updateDetectionStatus(detection!.id, status);
+      showToast('success', `Status updated to "${status}"`);
+    } catch {
+      showToast('warning', 'Status changed locally, but backend sync failed');
+    }
   }
 
-  function handleSaveNotes() {
-    updateDetectionNotes(detection!.id, notes);
-    showToast('success', 'Analyst notes saved');
+  async function handleSaveNotes() {
+    try {
+      await updateDetectionNotes(detection!.id, notes);
+      showToast('success', 'Analyst notes saved');
+    } catch {
+      showToast('warning', 'Notes saved locally, but backend sync failed');
+    }
+  }
+
+  function downloadTakedownDraft() {
+    const evidence = detection!.indicators
+      .filter((indicator) => indicator.triggered)
+      .map((indicator) => `- ${indicator.type}: ${indicator.detail}`);
+    const content = [
+      `Review request: suspected impersonation of ${brandProfile.companyName}`,
+      '',
+      `Observed asset: ${detection!.candidateName}`,
+      `Platform/store: ${detection!.platformOrStore}`,
+      `URL: ${detection!.url}`,
+      `Observed on: ${new Date(detection!.lastScanned).toLocaleString()}`,
+      `Risk score: ${detection!.riskScore}/100 (analyst-confirmed status: ${detection!.status})`,
+      `Potentially imitated asset: ${detection!.matchedOfficialAsset || brandProfile.companyName}`,
+      '',
+      'Evidence recorded by the monitoring platform:',
+      ...(evidence.length ? evidence : ['- No triggered evidence indicators were recorded.']),
+      '',
+      'This draft describes observed signals and requests review. It does not assert intent, ownership, or a policy violation; please verify the details before submission.',
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    const safeCandidateId = detection!.candidateId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    link.download = `review-request-${safeCandidateId}.txt`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('info', 'Evidence-based takedown draft downloaded');
   }
 
   return (
@@ -102,6 +137,14 @@ export function ThreatDetailDrawer({
               <ExternalLink size={14} className="flex-shrink-0" />
               {detection.url}
             </a>
+          </div>
+
+          <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 p-3">
+            <p className="text-xs text-slate-400">Potentially imitated official asset</p>
+            <p className="mt-1 text-sm font-medium text-white">{detection.matchedOfficialAsset || 'Brand profile'}</p>
+            <p className="mt-1 text-xs text-slate-400">
+              Name similarity {detection.similarityScore}% · Risk score {detection.riskScore}/100
+            </p>
           </div>
 
           {/* Bio / Description */}
@@ -158,7 +201,10 @@ export function ThreatDetailDrawer({
           {/* Evidence indicators */}
           {!detection.isOfficial && detection.indicators.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Evidence Indicators</h4>
+              <div className="mb-2 flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Evidence Indicators</h4>
+                <span className="text-[11px] text-slate-500">Signal weight and whether it contributed</span>
+              </div>
               <div className="space-y-2">
                 {detection.indicators.map((ind, i) => (
                   <div
@@ -175,7 +221,12 @@ export function ThreatDetailDrawer({
                       <CheckCircle2 size={14} className="text-emerald-400/50 flex-shrink-0 mt-0.5" />
                     )}
                     <div>
-                      <p className="font-medium">{ind.type}</p>
+                      <p className="flex flex-wrap items-center gap-2 font-medium">
+                        {ind.type}
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${ind.triggered ? 'bg-red-500/15 text-red-200' : 'bg-slate-700 text-slate-300'}`}>
+                          {ind.triggered ? `Contributed · weight ${ind.weight}` : `Not triggered · weight ${ind.weight}`}
+                        </span>
+                      </p>
                       <p className="text-xs mt-0.5 opacity-80">{ind.detail}</p>
                     </div>
                   </div>
@@ -185,7 +236,7 @@ export function ThreatDetailDrawer({
           )}
 
           {/* Status management */}
-          <div>
+          {!detection.isOfficial && <div>
             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Investigation Status</h4>
             <div className="flex flex-wrap gap-2">
               {STATUS_OPTIONS.map((status) => (
@@ -202,13 +253,13 @@ export function ThreatDetailDrawer({
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
 
           {/* Analyst notes */}
-          <div>
+          {!detection.isOfficial && <div>
             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Analyst Notes</h4>
             <textarea
-              value={notes || detection.analystNotes}
+              value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
               placeholder="Add investigation notes..."
@@ -220,7 +271,33 @@ export function ThreatDetailDrawer({
             >
               <Save size={14} /> Save Notes
             </button>
-          </div>
+          </div>}
+
+          {!detection.isOfficial && detection.status === 'Confirmed Threat' && (
+            <button
+              onClick={downloadTakedownDraft}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-600/20 border border-amber-500/30 text-amber-200 text-sm font-medium hover:bg-amber-600/30 transition-colors"
+            >
+              <Download size={16} /> Download evidence-based takedown draft
+            </button>
+          )}
+
+          <section>
+            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Investigation History</h4>
+            {detection.investigationHistory?.length ? (
+              <ol className="space-y-2">
+                {detection.investigationHistory.map((event) => (
+                  <li key={event.id} className="border-l-2 border-sky-500/40 pl-3 py-1">
+                    <p className="text-sm text-white">{event.action}</p>
+                    <p className="text-xs text-slate-300 break-words">{event.detail}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">{event.actor} · {new Date(event.timestamp).toLocaleString()}</p>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="text-xs text-slate-500">No analyst actions recorded yet.</p>
+            )}
+          </section>
 
           {/* Source info */}
           <div className="flex items-center gap-2 text-xs text-slate-500 border-t border-slate-800 pt-4">

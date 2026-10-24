@@ -37,6 +37,14 @@ export async function initializeDatabase() {
       data_json JSONB NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS investigations (
+      detection_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      analyst_notes TEXT NOT NULL,
+      history_json JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
   `);
 
   await pool.query(
@@ -158,6 +166,45 @@ export async function getCandidates() {
       .filter((row) => row.asset_type === 'Mobile App')
       .map((row) => row.data_json),
   };
+}
+
+export async function saveInvestigation(record) {
+  await pool.query(
+    `INSERT INTO investigations (detection_id, status, analyst_notes, history_json, updated_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (detection_id) DO UPDATE SET
+       status = EXCLUDED.status,
+       analyst_notes = EXCLUDED.analyst_notes,
+       history_json = EXCLUDED.history_json,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      record.detectionId,
+      record.status,
+      record.analystNotes,
+      record.investigationHistory,
+      record.updatedAt,
+    ],
+  );
+}
+
+function deserializeInvestigation(row) {
+  return {
+    detectionId: row.detection_id,
+    status: row.status,
+    analystNotes: row.analyst_notes,
+    investigationHistory: row.history_json,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function getInvestigation(detectionId) {
+  const { rows } = await pool.query('SELECT * FROM investigations WHERE detection_id = $1', [detectionId]);
+  return rows[0] ? deserializeInvestigation(rows[0]) : null;
+}
+
+export async function getInvestigations() {
+  const { rows } = await pool.query('SELECT * FROM investigations ORDER BY updated_at DESC');
+  return rows.map(deserializeInvestigation);
 }
 
 export async function closeDatabase() {

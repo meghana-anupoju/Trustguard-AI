@@ -9,6 +9,8 @@ import {
   ArrowRight,
   Clock,
   TrendingUp,
+  X,
+  Bell,
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { RiskBadge, StatusBadge } from '@/components/shared/Badges';
@@ -41,7 +43,7 @@ const RISK_COLORS: Record<string, string> = {
 };
 
 export function OverviewPage() {
-  const { detections, lastScanTime, isScanning, runScanning, setActiveSection, sourceStatuses } = useApp();
+  const { detections, lastScanTime, isScanning, runScanning, openDetection, setActiveSection, sourceStatuses, highRiskAlerts, dismissHighRiskAlert } = useApp();
   const metrics = calculateMetrics(detections);
   const threatDist = getThreatDistribution(detections);
   const socialVsApp = getSocialVsAppThreats(detections);
@@ -164,6 +166,41 @@ export function OverviewPage() {
       </div>
 
       <DataSourceStatus sources={sourceStatuses} />
+
+      {highRiskAlerts.length > 0 && (
+        <section aria-label="New high-risk alerts" className="rounded-xl border border-red-500/30 bg-red-950/30 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Bell size={16} className="text-red-300" />
+            <h2 className="text-sm font-semibold text-red-100">New high-risk detections</h2>
+            <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-200">{highRiskAlerts.length}</span>
+          </div>
+          <div className="space-y-2">
+            {highRiskAlerts.map((alert) => {
+              const detection = detections.find((item) => item.id === alert.detectionId);
+              if (!detection) return null;
+              return (
+                <div key={alert.detectionId} className="flex items-center justify-between gap-3 rounded-lg bg-slate-950/40 px-3 py-2">
+                  <button
+                    onClick={() => openDetection(detection.id)}
+                    className="min-w-0 text-left"
+                  >
+                    <span className="block truncate text-sm font-medium text-white">{detection.candidateName}</span>
+                    <span className="text-xs text-red-200">{detection.platformOrStore} · risk {detection.riskScore}/100</span>
+                  </button>
+                  <button
+                    onClick={() => dismissHighRiskAlert(alert.detectionId)}
+                    aria-label={`Dismiss alert for ${detection.candidateName}`}
+                    className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] text-red-200/70">Alerts are generated once per detection at risk score 50 or higher.</p>
+        </section>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">

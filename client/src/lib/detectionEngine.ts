@@ -21,8 +21,10 @@ export function riskLevelFromScore(score: number): RiskLevel {
 function isOfficialSocial(candidate: CandidateSocial, profile: BrandProfile): boolean {
   for (const official of profile.officialSocials) {
     if (
-      normalizeText(candidate.username) === normalizeText(official.username) ||
-      candidate.profileUrl.toLowerCase().trim() === official.url.toLowerCase().trim()
+      (candidate.platform === official.platform
+        && normalizeText(candidate.username) === normalizeText(official.username)) ||
+      candidate.profileUrl.toLowerCase().replace(/\/+$/, '').trim()
+        === official.url.toLowerCase().replace(/\/+$/, '').trim()
     ) {
       return true;
     }
@@ -72,6 +74,47 @@ function isKnownPublisher(publisher: string, knownPublishers: string[]): boolean
   return knownPublishers.some((kp) => normalizeText(kp) === np);
 }
 
+function textOverlapSimilarity(first: string, second: string): number {
+  const words = (value: string) => new Set(
+    value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s]/g, ' ').match(/[a-z0-9]{3,}/g) ?? [],
+  );
+  const firstWords = words(first);
+  const secondWords = words(second);
+  if (firstWords.size === 0 || secondWords.size === 0) return 0;
+  const commonWords = [...firstWords].filter((word) => secondWords.has(word)).length;
+  return Math.round((commonWords / new Set([...firstWords, ...secondWords]).size) * 100);
+}
+
+function closestOfficialSocial(candidate: CandidateSocial, profile: BrandProfile): { name: string; similarity: number } {
+  const comparisons = profile.officialSocials.map((asset) => ({
+    name: `${asset.displayName} (@${asset.username})`,
+    similarity: Math.max(
+      similarityScore(candidate.displayName, asset.displayName),
+      similarityScore(candidate.username, asset.username),
+    ),
+  }));
+  comparisons.push({
+    name: profile.companyName,
+    similarity: Math.max(
+      similarityScore(candidate.displayName, profile.companyName),
+      similarityScore(candidate.username, profile.companyName),
+    ),
+  });
+  return comparisons.sort((a, b) => b.similarity - a.similarity)[0];
+}
+
+function closestOfficialApp(candidate: CandidateApp, profile: BrandProfile): { name: string; similarity: number } {
+  const comparisons = profile.officialApps.map((asset) => ({
+    name: `${asset.appName} (${asset.store})`,
+    similarity: similarityScore(candidate.appName, asset.appName),
+  }));
+  comparisons.push({
+    name: profile.companyName,
+    similarity: similarityScore(candidate.appName, profile.companyName),
+  });
+  return comparisons.sort((a, b) => b.similarity - a.similarity)[0];
+}
+
 function buildSocialDetection(
   candidate: CandidateSocial,
   profile: BrandProfile
@@ -79,12 +122,11 @@ function buildSocialDetection(
   const brandName = profile.companyName;
   const indicators: DetectionIndicator[] = [];
   const reasons: string[] = [];
-  let isOfficial = false;
-  let similarity = 0;
+  const closestAsset = closestOfficialSocial(candidate, profile);
+  const similarity = closestAsset.similarity;
 
   // Check official exclusion first
   if (isOfficialSocial(candidate, profile)) {
-    isOfficial = true;
     return {
       id: `det-${candidate.id}`,
       candidateId: candidate.id,
@@ -102,6 +144,7 @@ function buildSocialDetection(
       analystNotes: '',
       lastScanned: new Date().toISOString(),
       source: candidate.source,
+      matchedOfficialAsset: closestAsset.name,
       bio: candidate.bio,
       verified: candidate.verified,
       followerCount: candidate.followerCount,
@@ -109,13 +152,9 @@ function buildSocialDetection(
   }
 
   // Name similarity
-  const nameSim = similarityScore(candidate.displayName, brandName);
-  const userSim = similarityScore(candidate.username, brandName);
-  similarity = Math.max(nameSim, userSim);
-
   indicators.push({
     type: 'Name Similarity',
-    detail: `Display name "${candidate.displayName}" is ${nameSim}% similar to "${brandName}". Username "${candidate.username}" is ${userSim}% similar.`,
+    detail: `Display name "${candidate.displayName}" and username "${candidate.username}" most closely resemble "${closestAsset.name}" (${similarity}%).`,
     weight: 25,
     triggered: similarity >= 70,
   });
@@ -193,6 +232,17 @@ function buildSocialDetection(
     }
   }
 
+  const descriptionOverlap = textOverlapSimilarity(candidate.bio, profile.description);
+  indicators.push({
+    type: 'Description Overlap',
+    detail: `Bio and brand description overlap: ${descriptionOverlap}%`,
+    weight: 10,
+    triggered: similarity >= 50 && descriptionOverlap >= 35,
+  });
+  if (similarity >= 50 && descriptionOverlap >= 35) {
+    reasons.push(`Bio shares ${descriptionOverlap}% of meaningful terms with the brand description`);
+  }
+
   // Calculate risk score
   const totalWeight = indicators.reduce((sum, ind) => sum + ind.weight, 0);
   const triggeredWeight = indicators
@@ -200,14 +250,12 @@ function buildSocialDetection(
     .reduce((sum, ind) => sum + ind.weight, 0);
   let riskScore = totalWeight > 0 ? Math.round((triggeredWeight / totalWeight) * 100) : 0;
 
-  // Boost for high similarity + multiple indicators
   const triggeredCount = indicators.filter((ind) => ind.triggered).length;
-  if (similarity >= 85 && triggeredCount >= 2) {
-    riskScore = Math.min(100, riskScore + 15);
-  }
-  if (similarity === 100 && !candidate.verified) {
-    riskScore = Math.min(100, riskScore + 10);
-  }
+  const similarityProximity = Math.max(0, Math.min(1, (similarity - 70) / 30));
+  const similarityBonus = (triggeredCount >= 2 ? Math.round(similarityProximity * 15) : 0)
+    + (!candidate.verified ? Math.round(similarityProximity * 5) : 0);
+  if (similarityBonus > 0) reasons.push(`Close name match added ${similarityBonus} risk points`);
+  riskScore = Math.min(100, riskScore + similarityBonus);
 
   // Cap at 0 if no indicators triggered
   if (triggeredCount === 0) riskScore = Math.max(0, riskScore - 20);
@@ -239,6 +287,7 @@ function buildSocialDetection(
     analystNotes: '',
     lastScanned: new Date().toISOString(),
     source: candidate.source,
+    matchedOfficialAsset: closestAsset.name,
     bio: candidate.bio,
     verified: candidate.verified,
     followerCount: candidate.followerCount,
@@ -252,7 +301,8 @@ function buildAppDetection(
   const brandName = profile.companyName;
   const indicators: DetectionIndicator[] = [];
   const reasons: string[] = [];
-  let similarity = 0;
+  const closestAsset = closestOfficialApp(candidate, profile);
+  const similarity = closestAsset.similarity;
 
   // Check official exclusion
   if (isOfficialApp(candidate, profile)) {
@@ -273,17 +323,16 @@ function buildAppDetection(
       analystNotes: '',
       lastScanned: new Date().toISOString(),
       source: candidate.source,
+      matchedOfficialAsset: closestAsset.name,
       description: candidate.description,
       publisher: candidate.publisher,
     };
   }
 
   // Name similarity
-  similarity = similarityScore(candidate.appName, brandName);
-
   indicators.push({
     type: 'Name Similarity',
-    detail: `App name "${candidate.appName}" is ${similarity}% similar to "${brandName}".`,
+    detail: `App name "${candidate.appName}" is ${similarity}% similar to "${closestAsset.name}".`,
     weight: 25,
     triggered: similarity >= 70,
   });
@@ -368,6 +417,17 @@ function buildAppDetection(
     triggered: false,
   });
 
+  const descriptionOverlap = textOverlapSimilarity(candidate.description, profile.description);
+  indicators.push({
+    type: 'Description Overlap',
+    detail: `App and brand description overlap: ${descriptionOverlap}%`,
+    weight: 15,
+    triggered: similarity >= 50 && descriptionOverlap >= 35,
+  });
+  if (similarity >= 50 && descriptionOverlap >= 35) {
+    reasons.push(`App description shares ${descriptionOverlap}% of meaningful terms with the brand description`);
+  }
+
   // Calculate risk score
   const totalWeight = indicators.reduce((sum, ind) => sum + ind.weight, 0);
   const triggeredWeight = indicators
@@ -376,9 +436,10 @@ function buildAppDetection(
   let riskScore = totalWeight > 0 ? Math.round((triggeredWeight / totalWeight) * 100) : 0;
 
   const triggeredCount = indicators.filter((ind) => ind.triggered).length;
-  if (similarity >= 85 && triggeredCount >= 2) {
-    riskScore = Math.min(100, riskScore + 15);
-  }
+  const similarityProximity = Math.max(0, Math.min(1, (similarity - 70) / 30));
+  const similarityBonus = triggeredCount >= 2 ? Math.round(similarityProximity * 15) : 0;
+  if (similarityBonus > 0) reasons.push(`Close name match added ${similarityBonus} risk points`);
+  riskScore = Math.min(100, riskScore + similarityBonus);
   if (triggeredCount === 0) {
     riskScore = Math.max(0, riskScore - 20);
   }
@@ -410,6 +471,7 @@ function buildAppDetection(
     analystNotes: '',
     lastScanned: new Date().toISOString(),
     source: candidate.source,
+    matchedOfficialAsset: closestAsset.name,
     description: candidate.description,
     publisher: candidate.publisher,
   };
@@ -424,7 +486,7 @@ export interface ScanOptions {
 }
 
 export function runScan(options: ScanOptions): ThreatDetection[] {
-  const { socialCandidates, appCandidates, profile, source, liveSourceAvailable } = options;
+  const { socialCandidates, appCandidates, profile, source } = options;
   const detections: ThreatDetection[] = [];
 
   for (const candidate of socialCandidates) {

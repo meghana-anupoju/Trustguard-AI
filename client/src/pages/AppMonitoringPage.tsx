@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import {
-  Share2,
+  Smartphone,
   Search,
   Filter,
   Zap,
@@ -11,21 +11,21 @@ import { useApp } from '@/context/AppContext';
 import { RiskBadge, StatusBadge } from '@/components/shared/Badges';
 import { DataSourceStatus } from '@/components/shared/DataSourceStatus';
 import { ThreatDetailDrawer } from '@/components/shared/ThreatDetailDrawer';
-import type { ThreatDetection, SocialPlatform, RiskLevel } from '@/types';
+import type { ThreatDetection, AppStore, RiskLevel } from '@/types';
 
-const PLATFORMS: (SocialPlatform | 'All')[] = ['All', 'Instagram', 'Facebook', 'LinkedIn', 'X', 'YouTube', 'TikTok', 'Telegram', 'Bluesky'];
+const STORES: (AppStore | 'All')[] = ['All', 'Google Play', 'Apple App Store', 'Amazon Appstore', 'Other'];
 const RISK_LEVELS: (RiskLevel | 'All')[] = ['All', 'Critical', 'High', 'Medium', 'Low'];
 
-export function SocialMonitoringPage() {
+export function AppMonitoringPage() {
   const { detections, isScanning, runScanning, sourceStatuses } = useApp();
   const [search, setSearch] = useState('');
-  const [platformFilter, setPlatformFilter] = useState<SocialPlatform | 'All'>('All');
+  const [storeFilter, setStoreFilter] = useState<AppStore | 'All'>('All');
   const [riskFilter, setRiskFilter] = useState<RiskLevel | 'All'>('All');
   const [sortBy, setSortBy] = useState<'risk' | 'name' | 'date'>('risk');
   const [selected, setSelected] = useState<ThreatDetection | null>(null);
 
-  const socialDetections = useMemo(() => {
-    let filtered = detections.filter((d) => d.assetType === 'Social Profile');
+  const appDetections = useMemo(() => {
+    let filtered = detections.filter((d) => d.assetType === 'Mobile App');
 
     if (search) {
       const q = search.toLowerCase();
@@ -33,12 +33,12 @@ export function SocialMonitoringPage() {
         (d) =>
           d.candidateName.toLowerCase().includes(q) ||
           d.platformOrStore.toLowerCase().includes(q) ||
-          d.url.toLowerCase().includes(q) ||
-          (d.bio || '').toLowerCase().includes(q)
+          (d.publisher || '').toLowerCase().includes(q) ||
+          (d.description || '').toLowerCase().includes(q)
       );
     }
-    if (platformFilter !== 'All') {
-      filtered = filtered.filter((d) => d.platformOrStore === platformFilter);
+    if (storeFilter !== 'All') {
+      filtered = filtered.filter((d) => d.platformOrStore === storeFilter);
     }
     if (riskFilter !== 'All') {
       filtered = filtered.filter((d) => d.riskLevel === riskFilter);
@@ -51,10 +51,10 @@ export function SocialMonitoringPage() {
     });
 
     return filtered;
-  }, [detections, search, platformFilter, riskFilter, sortBy]);
+  }, [detections, search, storeFilter, riskFilter, sortBy]);
 
   const counts = useMemo(() => {
-    const all = detections.filter((d) => d.assetType === 'Social Profile');
+    const all = detections.filter((d) => d.assetType === 'Mobile App');
     return {
       total: all.length,
       threats: all.filter((d) => !d.isOfficial && d.riskScore >= 25).length,
@@ -66,16 +66,16 @@ export function SocialMonitoringPage() {
     return (
       <div className="max-w-5xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white mb-1">Social Monitoring</h1>
-          <p className="text-slate-400 text-sm">Detect fake and impersonating social media profiles</p>
+          <h1 className="text-2xl font-bold text-white mb-1">App Monitoring</h1>
+          <p className="text-slate-400 text-sm">Detect suspicious and impersonating mobile applications</p>
         </div>
         <DataSourceStatus sources={sourceStatuses} />
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-sky-500/10 mb-4">
-            <Share2 size={32} className="text-sky-400" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-orange-500/10 mb-4">
+            <Smartphone size={32} className="text-orange-400" />
           </div>
           <h2 className="text-xl font-semibold text-white mb-2">No scan data yet</h2>
-          <p className="text-slate-400 text-sm mb-6">Run a scan to detect suspicious social media profiles.</p>
+          <p className="text-slate-400 text-sm mb-6">Run a scan to detect suspicious mobile apps.</p>
           <button
             onClick={runScanning}
             disabled={isScanning}
@@ -92,8 +92,8 @@ export function SocialMonitoringPage() {
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Social Monitoring</h1>
-          <p className="text-xs text-amber-400/90">Bluesky public search plus sample profiles; other social networks are not connected</p>
+          <h1 className="text-2xl font-bold text-white mb-1">App Monitoring</h1>
+          <p className="text-xs text-amber-400/90">Apple App Store live search plus samples; Google Play and Amazon are not connected</p>
           <p className="text-slate-400 text-sm">
             {counts.threats} suspicious · {counts.official} official · {counts.total} total
           </p>
@@ -121,17 +121,17 @@ export function SocialMonitoringPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, username, URL, or bio..."
+            placeholder="Search by app name, publisher, or description..."
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm focus:border-sky-500 focus:outline-none"
           />
         </div>
         <div className="flex gap-2">
           <select
-            value={platformFilter}
-            onChange={(e) => setPlatformFilter(e.target.value as SocialPlatform | 'All')}
+            value={storeFilter}
+            onChange={(e) => setStoreFilter(e.target.value as AppStore | 'All')}
             className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm focus:border-sky-500 focus:outline-none"
           >
-            {PLATFORMS.map((p) => <option key={p} value={p}>{p === 'All' ? 'All Platforms' : p}</option>)}
+            {STORES.map((s) => <option key={s} value={s}>{s === 'All' ? 'All Stores' : s}</option>)}
           </select>
           <select
             value={riskFilter}
@@ -153,14 +153,14 @@ export function SocialMonitoringPage() {
       </div>
 
       {/* Results */}
-      {socialDetections.length === 0 ? (
+      {appDetections.length === 0 ? (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
           <Filter size={28} className="text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm">No profiles match your filters.</p>
+          <p className="text-slate-400 text-sm">No apps match your filters.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {socialDetections.map((det) => (
+          {appDetections.map((det) => (
             <button
               key={det.id}
               onClick={() => setSelected(det)}
@@ -174,13 +174,15 @@ export function SocialMonitoringPage() {
                     </h3>
                     {det.isOfficial && <CheckCircle2 size={14} className="text-emerald-400 flex-shrink-0" />}
                   </div>
-                  <p className="text-xs text-slate-500 mt-0.5">{det.platformOrStore}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {det.platformOrStore} · {det.publisher || 'Unknown publisher'}
+                  </p>
                 </div>
                 <RiskBadge level={det.riskLevel} />
               </div>
 
-              {det.bio && (
-                <p className="text-xs text-slate-400 line-clamp-2 mb-3">{det.bio}</p>
+              {det.description && (
+                <p className="text-xs text-slate-400 line-clamp-2 mb-3">{det.description}</p>
               )}
 
               <div className="flex flex-wrap gap-1.5 mb-3">
@@ -198,7 +200,7 @@ export function SocialMonitoringPage() {
 
               {det.isOfficial && (
                 <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-400">
-                  <Info size={10} /> Official registered asset — excluded from alerts
+                  <Info size={10} /> Official registered app — excluded from alerts
                 </div>
               )}
             </button>
@@ -207,7 +209,7 @@ export function SocialMonitoringPage() {
       )}
 
       <ThreatDetailDrawer
-        detection={selected}
+        detection={detections.find((detection) => detection.id === selected?.id) ?? selected}
         open={!!selected}
         onClose={() => setSelected(null)}
       />

@@ -23,6 +23,7 @@ const statusColors: Record<InvestigationStatus, string> = {
   'Confirmed Threat': 'bg-red-500/15 text-red-300 border-red-500/30',
   'False Positive': 'bg-slate-500/15 text-slate-300 border-slate-500/30',
   Resolved: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  Closed: 'bg-slate-600/20 text-slate-300 border-slate-500/30',
 };
 
 export function StatusBadge({ status }: { status: InvestigationStatus }) {

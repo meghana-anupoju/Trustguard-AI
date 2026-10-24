@@ -5,7 +5,8 @@ export type InvestigationStatus =
   | 'Investigating'
   | 'Confirmed Threat'
   | 'False Positive'
-  | 'Resolved';
+  | 'Resolved'
+  | 'Closed';
 
 export type SocialPlatform =
   | 'Instagram'
@@ -106,11 +107,34 @@ export interface ThreatDetection {
   analystNotes: string;
   lastScanned: string;
   source: string;
+  matchedOfficialAsset?: string;
+  investigationHistory?: InvestigationEvent[];
   bio?: string;
   description?: string;
   publisher?: string;
   verified?: boolean;
   followerCount?: number;
+}
+
+export interface InvestigationEvent {
+  id: string;
+  action: string;
+  detail: string;
+  actor: string;
+  timestamp: string;
+}
+
+export interface InvestigationRecord {
+  detectionId: string;
+  status: InvestigationStatus;
+  analystNotes: string;
+  investigationHistory: InvestigationEvent[];
+  updatedAt: string;
+}
+
+export interface HighRiskAlert {
+  detectionId: string;
+  createdAt: string;
 }
 
 export interface ScanResult {
@@ -127,7 +151,7 @@ export interface ScanResult {
   detections: ThreatDetection[];
 }
 
-export interface ScanHistoryEntry extends Omit<ScanResult, 'detections' | 'sourceStatuses'> {}
+export type ScanHistoryEntry = Omit<ScanResult, 'detections' | 'sourceStatuses'>;
 
 export interface DataSourceStatus {
   name: string;

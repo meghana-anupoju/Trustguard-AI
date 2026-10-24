@@ -1,17 +1,21 @@
 import express from 'express';
 import cors from 'cors';
-import { socialCandidates, appCandidates } from './data.js';
+import { randomUUID } from 'node:crypto';
+import { createDemoCandidates } from './data.js';
 import { buildDetections } from './detection.js';
 import { collectLiveCandidates } from './sources.js';
 import {
   getScanById,
   getScanHistory,
   getCandidates,
+  getInvestigation,
+  getInvestigations,
   initializeDatabase,
   loadBrandProfile,
   persistCandidates,
   persistBrandProfile,
   persistScan,
+  saveInvestigation,
 } from './database.js';
 
 const app = express();
@@ -38,6 +42,7 @@ function isBrandProfile(value) {
 
 const socialPlatforms = new Set(['Instagram', 'Facebook', 'LinkedIn', 'X', 'YouTube', 'TikTok', 'Telegram', 'Bluesky', 'Other']);
 const appStores = new Set(['Google Play', 'Apple App Store', 'Amazon Appstore', 'Other']);
+const investigationStatuses = new Set(['New', 'Investigating', 'Confirmed Threat', 'False Positive', 'Resolved', 'Closed']);
 
 function validHttpUrl(value) {
   try {
@@ -93,6 +98,23 @@ function normalizeImportedCandidates(value) {
   return { socials, apps };
 }
 
+app.get('/', (req, res) => {
+  res.json({
+    service: 'Trustguard API',
+    status: 'ok',
+    documentation: {
+      health: '/api/health',
+      brandProfile: '/api/brand-profile',
+      candidates: '/api/candidates',
+      scans: '/api/scans',
+      scan: '/api/scan',
+      frontend: 'http://localhost:5173',
+    },
+    message: 'Use the frontend app at http://localhost:5173 or call the API endpoints above.',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -144,30 +166,104 @@ app.post('/api/candidates', asyncHandler(async (req, res) => {
   });
 }));
 
+app.get('/api/candidates', asyncHandler(async (req, res) => {
+  res.json(await getCandidates());
+}));
+
+app.get('/api/investigations', asyncHandler(async (req, res) => {
+  res.json(await getInvestigations());
+}));
+
+app.put('/api/investigations/:id', asyncHandler(async (req, res) => {
+  const { status, analystNotes } = req.body ?? {};
+  if (req.params.id.length > 300
+    || !investigationStatuses.has(status)
+    || typeof analystNotes !== 'string'
+    || analystNotes.length > 10000) {
+    return res.status(400).json({ error: 'Invalid investigation update.' });
+  }
+
+  const previous = await getInvestigation(req.params.id);
+  const updatedAt = new Date().toISOString();
+  const record = previous ?? {
+    detectionId: req.params.id,
+    status: 'New',
+    analystNotes: '',
+    investigationHistory: [],
+    updatedAt,
+  };
+  const history = [...record.investigationHistory];
+  if (record.status !== status) {
+    history.unshift({
+      id: randomUUID(),
+      action: 'Status changed',
+      detail: `Status changed from ${record.status} to ${status}`,
+      actor: 'Analyst',
+      timestamp: updatedAt,
+    });
+  }
+  if (record.analystNotes !== analystNotes) {
+    history.unshift({
+      id: randomUUID(),
+      action: 'Analyst note updated',
+      detail: analystNotes.trim() ? analystNotes.trim().slice(0, 240) : 'Analyst notes cleared',
+      actor: 'Analyst',
+      timestamp: updatedAt,
+    });
+  }
+  history.length = Math.min(history.length, 500);
+
+  const updated = {
+    detectionId: req.params.id,
+    status,
+    analystNotes,
+    investigationHistory: history,
+    updatedAt,
+  };
+  await saveInvestigation(updated);
+  return res.json(updated);
+}));
+
 app.post('/api/scan', asyncHandler(async (req, res) => {
   const live = await collectLiveCandidates(brandProfile.companyName);
   const imported = await getCandidates();
   const includeDemoData = req.body?.settings?.demoMode !== false;
+  const demoCandidates = includeDemoData
+    ? createDemoCandidates(brandProfile)
+    : { socialCandidates: [], appCandidates: [] };
   const allSocialCandidates = [
-    ...(includeDemoData ? socialCandidates : []),
+    ...demoCandidates.socialCandidates,
     ...imported.socialCandidates,
     ...live.socialCandidates,
   ];
   const allAppCandidates = [
-    ...(includeDemoData ? appCandidates : []),
+    ...demoCandidates.appCandidates,
     ...imported.appCandidates,
     ...live.appCandidates,
   ];
-  const { detections, officialExcluded } = buildDetections(
+  const { detections: scoredDetections, officialExcluded } = buildDetections(
     brandProfile,
     allSocialCandidates,
     allAppCandidates,
     req.body?.settings,
   );
+  const investigations = await getInvestigations();
+  const investigationMap = new Map(investigations.map((record) => [record.detectionId, record]));
+  const detections = scoredDetections.map((detection) => {
+    const investigation = investigationMap.get(detection.id);
+    return investigation
+      ? {
+        ...detection,
+        status: investigation.status,
+        analystNotes: investigation.analystNotes,
+        investigationHistory: investigation.investigationHistory,
+      }
+      : detection;
+  });
   const hasLiveSource = live.sourceStatuses.some((source) => source.status === 'connected');
   const activeSourceStatuses = [
     ...(includeDemoData
-      ? [{ name: 'Built-in demo records', status: 'demo', detail: `${socialCandidates.length} social and ${appCandidates.length} app examples` }]
+      ? [{ name: 'Built-in demo records', status: 'demo', detail: `${demoCandidates.socialCandidates.length} social and ${demoCandidates.appCandidates.length} app examples customized for ${brandProfile.companyName}` }]
       : []),
     { name: 'Imported analyst dataset', status: 'demo', detail: `${imported.socialCandidates.length} social and ${imported.appCandidates.length} app records` },
     ...live.sourceStatuses,

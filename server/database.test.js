@@ -38,6 +38,19 @@ test('brand profile and scan history survive database reconnection', async () =>
       [{ id: 'persisted-social', username: 'sample' }],
       [{ id: 'persisted-app', appName: 'Sample' }],
     );
+    await firstConnection.saveInvestigation({
+      detectionId: 'det-candidate-1',
+      status: 'Confirmed Threat',
+      analystNotes: 'Verified with source evidence.',
+      investigationHistory: [{
+        id: 'event-1',
+        action: 'Status changed',
+        detail: 'Status changed from New to Confirmed Threat',
+        actor: 'Analyst',
+        timestamp: '2026-10-10T00:01:00.000Z',
+      }],
+      updatedAt: '2026-10-10T00:01:00.000Z',
+    });
 
     const secondConnection = await import(`./database.js?second=${Date.now()}`);
     connections.push(secondConnection);
@@ -48,6 +61,8 @@ test('brand profile and scan history survive database reconnection', async () =>
     assert.equal((await secondConnection.getScanById('scan-persistence-test')).detections[0].candidateId, 'candidate-1');
     assert.equal((await secondConnection.getCandidates()).socialCandidates[0].id, 'persisted-social');
     assert.equal((await secondConnection.getCandidates()).appCandidates[0].id, 'persisted-app');
+    assert.equal((await secondConnection.getInvestigation('det-candidate-1')).status, 'Confirmed Threat');
+    assert.equal((await secondConnection.getInvestigations())[0].investigationHistory[0].actor, 'Analyst');
   } finally {
     await Promise.all([...new Set(connections.map((connection) => connection.closeDatabase))]
       .map((closeDatabase) => closeDatabase()));

@@ -4,6 +4,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from 'react';
 import type {
@@ -16,20 +17,24 @@ import type {
   NavSection,
   DataSourceStatus,
   ScanHistoryEntry,
+  HighRiskAlert,
+  InvestigationEvent,
 } from '@/types';
 import { storage } from '@/lib/storage';
 import { runScan } from '@/lib/detectionEngine';
 import { api } from '@/lib/api';
 import {
   DEMO_BRAND_PROFILE,
-  DEMO_SOCIAL_CANDIDATES,
-  DEMO_APP_CANDIDATES,
+  createDemoCandidates,
 } from '@/data/demoData';
 
 interface AppContextValue {
   // Navigation
   activeSection: NavSection;
   setActiveSection: (section: NavSection) => void;
+  openDetection: (detectionId: string) => void;
+  focusedDetectionId: string | null;
+  clearFocusedDetection: () => void;
 
   // Auth / loading
   isAuthenticated: boolean;
@@ -48,10 +53,12 @@ interface AppContextValue {
   lastScanTime: string | null;
   sourceStatuses: DataSourceStatus[];
   scanHistory: ScanHistoryEntry[];
+  highRiskAlerts: HighRiskAlert[];
+  dismissHighRiskAlert: (detectionId: string) => void;
 
   // Detection management
-  updateDetectionStatus: (id: string, status: InvestigationStatus) => void;
-  updateDetectionNotes: (id: string, notes: string) => void;
+  updateDetectionStatus: (id: string, status: InvestigationStatus) => Promise<void>;
+  updateDetectionNotes: (id: string, notes: string) => Promise<void>;
 
   // Settings
   settings: AppSettings;
@@ -70,6 +77,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [activeSection, setActiveSection] = useState<NavSection>('Overview');
+  const [focusedDetectionId, setFocusedDetectionId] = useState<string | null>(null);
   const [brandProfile, setBrandProfile] = useState<BrandProfile>(storage.getBrandProfile());
   const [detections, setDetections] = useState<ThreatDetection[]>(storage.getDetections());
   const [isScanning, setIsScanning] = useState(false);
@@ -80,6 +88,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     { name: 'Apple App Store Search API', status: 'not_checked', detail: 'Queried only when you run a scan.' },
   ]);
   const [scanHistory, setScanHistory] = useState<ScanHistoryEntry[]>([]);
+  const [highRiskAlerts, setHighRiskAlerts] = useState<HighRiskAlert[]>(storage.getHighRiskAlerts());
+  const alertedDetectionIds = useRef(new Set(storage.getAlertedDetectionIds()));
   const [settings, setSettings] = useState<AppSettings>(storage.getSettings());
   const [importedSocials, setImportedSocials] = useState<CandidateSocial[]>([]);
   const [importedApps, setImportedApps] = useState<CandidateApp[]>([]);
@@ -90,15 +100,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadInitialData = useCallback(async () => {
     try {
-      const [profile, history] = await Promise.all([api.getBrandProfile(), api.getScanHistory()]);
+      const [profile, history, investigations, candidates, health] = await Promise.all([
+        api.getBrandProfile(),
+        api.getScanHistory(),
+        api.getInvestigations(),
+        api.getCandidates(),
+        api.getHealth(),
+      ]);
       if (profile) {
         setBrandProfile(profile);
       }
       setScanHistory(history);
-    } catch {
+      setImportedSocials(candidates.socialCandidates);
+      setImportedApps(candidates.appCandidates);
+      setSourceStatuses((current) => [
+        ...current.filter((source) => source.name !== 'Backend API'),
+        {
+          name: 'Backend API',
+          status: health.status === 'ok' ? 'connected' : 'unavailable',
+          detail: health.status === 'ok' ? 'API is responding.' : 'API returned an unhealthy status.',
+        },
+      ]);
+      if (history[0]) {
+        const latestScan = await api.getScan(history[0].id);
+        const investigationMap = new Map(investigations.map((record) => [record.detectionId, record]));
+        setDetections(latestScan.detections.map((detection) => {
+          const record = investigationMap.get(detection.id);
+          return record
+            ? {
+              ...detection,
+              status: record.status,
+              analystNotes: record.analystNotes,
+              investigationHistory: record.investigationHistory,
+            }
+            : detection;
+        }));
+        setLastScanTime(latestScan.timestamp);
+        storage.saveLastScan(latestScan.timestamp);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Backend request failed.';
       setSourceStatuses([
         { name: 'Built-in demo records', status: 'demo', detail: 'Using local sample candidates.' },
-        { name: 'Backend scan API', status: 'unavailable', detail: 'Could not reach the backend; live providers were not queried.' },
+        { name: 'Backend API', status: 'unavailable', detail },
       ]);
     } finally {
       setIsLoading(false);
@@ -114,6 +158,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const login = useCallback(() => {
     setIsAuthenticated(true);
     try { localStorage.setItem('brandshield_auth', 'true'); } catch { /* ignore */ }
+  }, []);
+
+  const openDetection = useCallback((detectionId: string) => {
+    setFocusedDetectionId(detectionId);
+    setActiveSection('Threat Intelligence');
+  }, []);
+
+  const clearFocusedDetection = useCallback(() => {
+    setFocusedDetectionId(null);
   }, []);
 
   const logout = useCallback(() => {
@@ -143,6 +196,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await api.saveBrandProfile(updatedProfile);
   }, []);
 
+  const recordHighRiskAlerts = useCallback((newDetections: ThreatDetection[], existingCandidateIds: Set<string>) => {
+    const alerts = newDetections
+      .filter((detection) => !detection.isOfficial
+        && detection.riskScore >= 50
+        && !existingCandidateIds.has(detection.candidateId)
+        && !alertedDetectionIds.current.has(detection.id))
+      .map((detection) => {
+        alertedDetectionIds.current.add(detection.id);
+        return { detectionId: detection.id, createdAt: new Date().toISOString() };
+      });
+
+    if (alerts.length === 0) return;
+    storage.saveAlertedDetectionIds([...alertedDetectionIds.current]);
+    setHighRiskAlerts((current) => {
+      const updated = [...alerts, ...current];
+      storage.saveHighRiskAlerts(updated);
+      return updated;
+    });
+  }, []);
+
   const runScanning = useCallback(async () => {
     setIsScanning(true);
 
@@ -158,11 +231,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
               ...det,
               status: existing.status,
               analystNotes: existing.analystNotes,
+              investigationHistory: existing.investigationHistory,
             };
           }
           return det;
         });
 
+        recordHighRiskAlerts(scanResult.detections, new Set(existingMap.keys()));
         setDetections(merged);
         const now = scanResult.timestamp ?? new Date().toISOString();
         setLastScanTime(now);
@@ -183,8 +258,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Simulate scan delay for UX
     setTimeout(() => {
-      const socialCandidates = [...(settings.demoMode ? DEMO_SOCIAL_CANDIDATES : []), ...importedSocials];
-      const appCandidates = [...(settings.demoMode ? DEMO_APP_CANDIDATES : []), ...importedApps];
+      const demoCandidates = settings.demoMode ? createDemoCandidates(brandProfile) : { socials: [], apps: [] };
+      const socialCandidates = [...demoCandidates.socials, ...importedSocials];
+      const appCandidates = [...demoCandidates.apps, ...importedApps];
 
       // Merge existing notes/statuses with new detections
       const existingMap = new Map(detections.map((d) => [d.candidateId, d]));
@@ -204,15 +280,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ...det,
             status: existing.status,
             analystNotes: existing.analystNotes,
+            investigationHistory: existing.investigationHistory,
           };
         }
         return det;
       });
 
+      recordHighRiskAlerts(newDetections, new Set(existingMap.keys()));
       setDetections(merged);
       setSourceStatuses([
         ...(settings.demoMode
-          ? [{ name: 'Built-in demo records', status: 'demo' as const, detail: 'Sample candidate records included in this scan.' }]
+          ? [{ name: 'Built-in demo records', status: 'demo' as const, detail: 'Brand-aware synthetic examples included in this scan.' }]
           : []),
         { name: 'Imported analyst dataset', status: 'demo', detail: `${importedSocials.length} social and ${importedApps.length} app records` },
         { name: 'External provider APIs', status: 'unavailable', detail: 'Backend unavailable; external searches were not run.' },
@@ -222,19 +300,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
       storage.saveLastScan(now);
       setIsScanning(false);
     }, 1200);
-  }, [importedSocials, importedApps, brandProfile, detections, settings]);
+  }, [importedSocials, importedApps, brandProfile, detections, settings, recordHighRiskAlerts]);
 
-  const updateDetectionStatus = useCallback((id: string, status: InvestigationStatus) => {
-    setDetections((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, status } : d))
-    );
+  const dismissHighRiskAlert = useCallback((detectionId: string) => {
+    setHighRiskAlerts((current) => {
+      const updated = current.filter((alert) => alert.detectionId !== detectionId);
+      storage.saveHighRiskAlerts(updated);
+      return updated;
+    });
   }, []);
 
-  const updateDetectionNotes = useCallback((id: string, notes: string) => {
-    setDetections((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, analystNotes: notes } : d))
-    );
-  }, []);
+  const updateDetectionStatus = useCallback(async (id: string, status: InvestigationStatus) => {
+    const detection = detections.find((item) => item.id === id);
+    if (!detection || detection.status === status) return;
+    const timestamp = new Date().toISOString();
+    const event: InvestigationEvent = {
+      id: `event-${timestamp}-${status}`,
+      action: 'Status changed',
+      detail: `Status changed from ${detection.status} to ${status}`,
+      actor: 'Analyst',
+      timestamp,
+    };
+    setDetections((prev) => prev.map((item) => item.id === id
+      ? { ...item, status, investigationHistory: [event, ...(item.investigationHistory ?? [])] }
+      : item));
+    if (status !== 'New') dismissHighRiskAlert(id);
+    const saved = await api.saveInvestigation(id, status, detection.analystNotes);
+    setDetections((prev) => prev.map((item) => item.id === id
+      ? { ...item, status: saved.status, analystNotes: saved.analystNotes, investigationHistory: saved.investigationHistory }
+      : item));
+  }, [detections, dismissHighRiskAlert]);
+
+  const updateDetectionNotes = useCallback(async (id: string, notes: string) => {
+    const detection = detections.find((item) => item.id === id);
+    if (!detection || detection.analystNotes === notes) return;
+    const timestamp = new Date().toISOString();
+    const event: InvestigationEvent = {
+      id: `event-${timestamp}-notes`,
+      action: 'Analyst note updated',
+      detail: notes.trim() ? notes.trim().slice(0, 240) : 'Analyst notes cleared',
+      actor: 'Analyst',
+      timestamp,
+    };
+    setDetections((prev) => prev.map((item) => item.id === id
+      ? { ...item, analystNotes: notes, investigationHistory: [event, ...(item.investigationHistory ?? [])] }
+      : item));
+    const saved = await api.saveInvestigation(id, detection.status, notes);
+    setDetections((prev) => prev.map((item) => item.id === id
+      ? { ...item, status: saved.status, analystNotes: saved.analystNotes, investigationHistory: saved.investigationHistory }
+      : item));
+  }, [detections]);
 
   const saveSettings = useCallback((s: AppSettings) => {
     setSettings(s);
@@ -250,6 +365,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     storage.resetAll();
     setBrandProfile(DEMO_BRAND_PROFILE);
     setDetections([]);
+    setHighRiskAlerts([]);
+    alertedDetectionIds.current.clear();
     setLastScanTime(null);
     setImportedSocials([]);
     setImportedApps([]);
@@ -261,6 +378,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         activeSection,
         setActiveSection,
+        openDetection,
+        focusedDetectionId,
+        clearFocusedDetection,
         isAuthenticated,
         login,
         logout,
@@ -273,6 +393,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         lastScanTime,
         sourceStatuses,
         scanHistory,
+        highRiskAlerts,
+        dismissHighRiskAlert,
         updateDetectionStatus,
         updateDetectionNotes,
         settings,
